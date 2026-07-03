@@ -3,17 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Phone Camera - Firebase Sender</title>
+    <title>Phone Camera - Firebase Sender & Controller</title>
     <style>
         body { margin: 0; padding: 20px; background: #121212; color: #fff; font-family: sans-serif; text-align: center; }
-        .setting-box { background: #222; padding: 15px; border-radius: 8px; max-width: 400px; margin: 15px auto; text-align: left; border: 1px solid #333; }
-        label { display: block; margin-bottom: 8px; font-weight: bold; color: #00ffcc; }
-        select { width: 100%; padding: 10px; background: #000; color: #fff; border: 1px solid #444; border-radius: 5px; margin-bottom: 15px; font-size: 16px; }
-        .btn { width: 100%; max-width: 400px; padding: 15px; font-size: 18px; font-weight: bold; background: #00ffcc; border: none; border-radius: 8px; cursor: pointer; color: #000; box-shadow: 0 4px 15px rgba(0,255,204,0.3); }
-        #status { margin-top: 20px; color: #ffaa00; font-size: 15px; font-weight: bold; }
+        .btn { padding: 15px 30px; font-size: 18px; font-weight: bold; background: #00ffcc; border: none; border-radius: 8px; cursor: pointer; color: #000; box-shadow: 0 4px 15px rgba(0,255,204,0.3); }
+        #status { margin-top: 20px; color: #888; font-size: 15px; }
         video { width: 100%; max-width: 400px; border-radius: 12px; margin-top: 20px; transform: scaleX(-1); border: 3px solid #333; }
+        
+        /* Layout Controller Styling */
+        .control-box { background: #1e1e1e; padding: 20px; border-radius: 12px; max-width: 400px; margin: 20px auto; text-align: left; border: 1px solid #333; }
+        .control-group { margin-bottom: 15px; }
+        .control-group label { display: block; margin-bottom: 5px; color: #00ffcc; font-weight: bold; }
+        .control-group input { width: 100%; accent-color: #00ffcc; }
     </style>
     
+    <!-- Firebase SDK Modules -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getDatabase, ref, set, onValue, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
@@ -31,37 +35,37 @@
 
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
+        const signalRef = ref(db, 'stream/signal');
+        const layoutRef = ref(db, 'stream/layout');
 
         let peerConnection;
-        let localStream;
-        const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
+        const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+        // --- OBS ၏ Layout ကို လှမ်းပြောင်းမည့် Function ---
+        function sendLayoutUpdate() {
+            const topVal = document.getElementById('topSlider').value;
+            const leftVal = document.getElementById('leftSlider').value;
+            const sizeVal = document.getElementById('sizeSlider').value;
+
+            set(layoutRef, {
+                top: topVal + "px",
+                left: leftVal + "px",
+                width: sizeVal + "px"
+            });
+        }
+
+        // Sliders များ ရွှေ့လျှင် ချက်ချင်း ဒေတာပို့ရန် Event ပတ်ခြင်း
+        document.querySelectorAll('.layout-slider').forEach(slider => {
+            slider.addEventListener('input', sendLayoutUpdate);
+        });
 
         window.startCamera = async function() {
-            // အရင် Stream ရှိရင် ပိတ်ပစ်ရန်
-            if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
-            }
-
-            const resolution = document.getElementById('resolution').value;
-            const fps = parseInt(document.getElementById('fps').value);
-            
-            let width = 1280, height = 720;
-            if (resolution === '1080p') { width = 1920; height = 1080; }
-
-            document.getElementById('status').innerText = `ကင်မရာကို ${resolution} (${fps}fps) ဖြင့် ဖွင့်နေပါသည်...`;
-
+            document.getElementById('status').innerText = "ကင်မရာ ဖွင့်နေပါသည်...";
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { 
-                        facingMode: "user", 
-                        width: { exact: width }, 
-                        height: { exact: height },
-                        frameRate: { ideal: fps, max: fps }
-                    }, 
+                    video: { facingMode: "user", width: 1280, height: 720 }, 
                     audio: false 
                 });
-                
-                localStream = stream;
                 document.getElementById('localVideo').srcObject = stream;
 
                 peerConnection = new RTCPeerConnection(configuration);
@@ -69,58 +73,58 @@
 
                 peerConnection.onicecandidate = event => {
                     if (event.candidate) {
-                        const candidateRef = ref(db, `stream/candidates/${Math.random().toString(36).substr(2, 9)}`);
-                        set(candidateRef, JSON.stringify(event.candidate));
+                        set(ref(db, 'stream/candidate'), JSON.stringify(event.candidate));
                     }
                 };
 
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
                 
-                // ဒေတာအဟောင်းများ ရှိခဲ့ရင် အရင်ရှင်းထုတ်ရန်
-                await set(ref(db, 'stream'), null);
-                
-                // ဆာဗာပေါ်သို့ Signal အသစ်တင်ရန်
-                await set(ref(db, 'stream/offer'), JSON.stringify({ type: 'offer', sdp: offer.sdp }));
-                document.getElementById('status').innerText = "🟢 ဖုန်းဘက်မှ အသင့်ဖြစ်ပါပြီ။ OBS ဘက်တွင် 'ချိတ်ဆက်မည်' ခလုတ်ကို နှိပ်ပေးပါ။";
+                await set(signalRef, JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+                document.getElementById('status').innerText = "🟢 ဗီဒီယိုလွှင့်နေပါပြီ။ OBS ဘက်တွင် အလိုအလျောက် ပေါ်လာပါလိမ့်မည်။";
+
+                // ပထမဆုံးအကြိမ် Layout အခြေအနေကို ပို့ထားရန်
+                sendLayoutUpdate();
 
                 onValue(ref(db, 'stream/answer'), async (snapshot) => {
                     const data = snapshot.val();
                     if (data && peerConnection.signalingState !== "stable") {
                         const answer = JSON.parse(data);
                         await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-                        document.getElementById('status').innerText = "🟢 OBS နှင့် ချိတ်ဆက်မှု အောင်မြင်သွားပါပြီ!";
                     }
                 });
 
                 onDisconnect(ref(db, 'stream')).remove();
 
             } catch (err) {
-                document.getElementById('status').innerText = "Error: သင့်ဖုန်း ကင်မရာသည် ၎င်းတင်ပြထားသော Resolution/FPS ကို Support မလုပ်ပါ (သို့မဟုတ်) ခွင့်ပြုချက်မရပါ။";
-                console.error(err);
+                document.getElementById('status').innerText = "Error: " + err.message;
             }
         }
     </script>
 </head>
 <body>
-    <h1>📱 PHONE STREAM SETTING</h1>
-    
-    <div class="setting-box">
-        <label for="resolution">Resolution ရွေးချယ်ပါ:</label>
-        <select id="resolution">
-            <option value="720p">720p (HD)</option>
-            <option value="1080p">1080p (Full HD)</option>
-        </select>
 
-        <label for="fps">Frame Rate (FPS):</label>
-        <select id="fps">
-            <option value="30">30 FPS</option>
-            <option value="60">60 FPS</option>
-        </select>
+    <h1>📱 PHONE STREAM & CONTROLLER</h1>
+    <button class="btn" onclick="startCamera()">ကင်မရာ စဖွင့်မည်</button>
+    <div id="status">ခလုတ်ကို နှိပ်ပါ...</div>
+
+    <!-- 🎛️ Layout ထိန်းချုပ်ရန် Sliders များ -->
+    <div class="control-box">
+        <div class="control-group">
+            <label>အပေါ် / အောက် (Top Position)</label>
+            <input type="range" id="topSlider" class="layout-slider" min="0" max="900" value="30">
+        </div>
+        <div class="control-group">
+            <label>ဘယ် / ညာ (Left Position)</label>
+            <input type="range" id="leftSlider" class="layout-slider" min="0" max="1600" value="30">
+        </div>
+        <div class="control-group">
+            <label>အရွယ်အစား (Camera Size/Width)</label>
+            <input type="range" id="sizeSlider" class="layout-slider" min="150" max="1000" value="400">
+        </div>
     </div>
 
-    <button class="btn" onclick="startCamera()">ကင်မရာ စတင်ဖွင့်မည်</button>
-    <div id="status">Setting ရွေးချယ်ပြီး ခလုတ်ကို နှိပ်ပါ...</div>
     <video id="localVideo" autoplay playsinline muted></video>
+
 </body>
 </html>
