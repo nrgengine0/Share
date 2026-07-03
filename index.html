@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Phone Camera - Persistent Connection</title>
+    <title>Phone Camera - Persistent Connection with Quality Control</title>
     <style>
         body { margin: 0; padding: 20px; background: #121212; color: #fff; font-family: sans-serif; text-align: center; }
         .btn { padding: 15px 30px; font-size: 16px; font-weight: bold; background: #00ffcc; border: none; border-radius: 8px; cursor: pointer; color: #000; box-shadow: 0 4px 15px rgba(0,255,204,0.3); margin: 5px; }
@@ -18,7 +18,7 @@
         .control-box { background: #1e1e1e; padding: 20px; border-radius: 12px; max-width: 400px; margin: 20px auto; text-align: left; border: 1px solid #333; }
         .control-group { margin-bottom: 15px; }
         .control-group label { display: block; margin-bottom: 5px; color: #00ffcc; font-weight: bold; }
-        .control-group input { width: 100%; accent-color: #00ffcc; }
+        .control-group input, .control-group select { width: 100%; accent-color: #00ffcc; background: #2a2a2a; color: white; border: 1px solid #444; padding: 8px; border-radius: 6px; }
         
         .video-container { position: relative; max-width: 400px; margin: 20px auto; }
         video { width: 100%; border-radius: 12px; transform: scaleX(-1); border: 3px solid #333; }
@@ -38,7 +38,35 @@
         <div id="obsList"><div style="color:#777; text-align:center; font-size:14px;">ချိတ်ဆက်မှု မရှိသေးပါ</div></div>
     </div>
 
+    <!-- ⚙️ Quality Settings Box -->
     <div class="control-box">
+        <div class="list-title" style="border:none;">⚙️ CAMERA QUALITY SETTINGS</div>
+        <div class="control-group">
+            <label>အချိုးအစား (Aspect Ratio)</label>
+            <select id="ratioSelect">
+                <option value="1:1" selected>1:1 (Square)</option>
+                <option value="16:9">16:9 (Landscape)</option>
+                <option value="9:16">9:16 (Portrait)</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>ကြည်လင်ပြတ်သားမှု (Resolution)</label>
+            <select id="resSelect">
+                <option value="720p" selected>720p (HD)</option>
+                <option value="1080p">1080p (Full HD)</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>ဖရိမ်နှုန်း (Frame Rate)</label>
+            <select id="fpsSelect">
+                <option value="30" selected>30 FPS</option>
+                <option value="60">60 FPS</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="control-box">
+        <div class="list-title" style="border:none;">📐 LAYOUT CONTROLS</div>
         <div class="control-group">
             <label>အပေါ် / အောက် (Top Position)</label>
             <input type="range" id="topSlider" min="0" max="900" value="30">
@@ -85,7 +113,6 @@
         const localVideo = document.getElementById('localVideo');
         const pipBtn = document.getElementById('pipBtn');
 
-        // 🍏 iOS Safari & Chromium Web PiP Fallback Trigger (တခြားကုဒ်မပြင်ဘဲ ခလုတ်ပွင့်အောင် လုပ်ထားသည်)
         if (localVideo.webkitSupportsPresentationMode && typeof localVideo.webkitSetPresentationMode === "function") {
             pipBtn.style.display = 'block';
             pipBtn.addEventListener('click', () => {
@@ -183,19 +210,53 @@
             set(layoutRef, {
                 top: document.getElementById('topSlider').value + "px",
                 left: document.getElementById('leftSlider').value + "px",
-                width: document.getElementById('sizeSlider').value + "px"
+                width: document.getElementById('sizeSlider').value + "px",
+                ratio: document.getElementById('ratioSelect').value // OBS ဘက်ကို Aspect Ratio လှမ်းပို့ပေးခြင်း
             });
         }
 
         document.getElementById('topSlider').addEventListener('input', sendLayoutUpdate);
         document.getElementById('leftSlider').addEventListener('input', sendLayoutUpdate);
         document.getElementById('sizeSlider').addEventListener('input', sendLayoutUpdate);
+        document.getElementById('ratioSelect').addEventListener('change', sendLayoutUpdate);
+
+        // 🔄 Quality Settings ပြောင်းလဲသွားချိန် ကင်မရာကို dynamic streaming အဖြစ် restart ချပေးမည့်စနစ်
+        async function applyQualityChanges() {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                await startCamera();
+                // ချိတ်ဆက်ထားပြီးသား Peer Connections များကို အသစ်ပြန်ချိတ်ခိုင်းခြင်း
+                Object.keys(peerConnections).forEach(async (id) => {
+                    if (peerConnections[id]) {
+                        peerConnections[id].close();
+                        delete peerConnections[id];
+                        await set(ref(db, `stream/connections/${id}`), "waiting");
+                    }
+                });
+            }
+        }
+
+        document.getElementById('resSelect').addEventListener('change', applyQualityChanges);
+        document.getElementById('fpsSelect').addEventListener('change', applyQualityChanges);
 
         window.startCamera = async function() {
             document.getElementById('status').innerText = "ကင်မရာ ဖွင့်နေပါသည်...";
+            
+            // UI ကနေ Settings တန်ဖိုးများကို ရယူခြင်း
+            const resMode = document.getElementById('resSelect').value;
+            const fpsMode = parseInt(document.getElementById('fpsSelect').value);
+            
+            const targetWidth = resMode === "1080p" ? 1920 : 1280;
+            const targetHeight = resMode === "1080p" ? 1080 : 720;
+
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "user", width: 1280, height: 720 }, 
+                    video: { 
+                        facingMode: "user", 
+                        width: { ideal: targetWidth }, 
+                        height: { ideal: targetHeight },
+                        frameRate: { ideal: fpsMode }
+                    }, 
                     audio: false 
                 });
                 
@@ -206,6 +267,7 @@
 
                 localVideo.srcObject = localStream;
                 document.getElementById('status').innerText = "🟢 ချိတ်ဆက်မှု အရှင် (Persistent Mode Active) ဖြစ်ပါပြီ။ Kick နှိပ်မှ ပျက်ပါမည်။";
+                sendLayoutUpdate();
             } catch (err) {
                 document.getElementById('status').innerText = "Error: " + err.message;
             }
