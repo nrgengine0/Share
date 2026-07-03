@@ -3,20 +3,66 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Phone Camera - Firebase Sender</title>
+    <title>Phone Camera - iOS Live Background Stream</title>
     <style>
         body { margin: 0; padding: 20px; background: #121212; color: #fff; font-family: sans-serif; text-align: center; }
-        .btn { padding: 15px 30px; font-size: 18px; font-weight: bold; background: #00ffcc; border: none; border-radius: 8px; cursor: pointer; color: #000; box-shadow: 0 4px 15px rgba(0,255,204,0.3); }
-        #status { margin-top: 20px; color: #888; font-size: 15px; }
-        video { width: 100%; max-width: 400px; border-radius: 12px; margin-top: 20px; transform: scaleX(-1); border: 3px solid #333; box-shadow: 0 5px 15px rgba(0,0,0,0.5); }
+        .btn { padding: 15px 30px; font-size: 16px; font-weight: bold; background: #00ffcc; border: none; border-radius: 8px; cursor: pointer; color: #000; box-shadow: 0 4px 15px rgba(0,255,204,0.3); margin: 5px; }
+        #status { margin-top: 15px; color: #ffaa00; font-size: 15px; }
+        
+        .list-box { background: #1e1e1e; padding: 15px; border-radius: 12px; max-width: 400px; margin: 20px auto; border: 1px solid #333; text-align: left; }
+        .list-title { font-weight: bold; color: #00ffcc; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 5px; }
+        .obs-item { display: flex; justify-content: space-between; align-items: center; background: #2a2a2a; padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; border: 1px solid #444; }
+        .obs-id { font-family: monospace; font-size: 14px; color: #fff; }
+        .btn-kick { background: #ff3333; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; }
+        
+        .control-box { background: #1e1e1e; padding: 20px; border-radius: 12px; max-width: 400px; margin: 20px auto; text-align: left; border: 1px solid #333; }
+        .control-group { margin-bottom: 15px; }
+        .control-group label { display: block; margin-bottom: 5px; color: #00ffcc; font-weight: bold; }
+        .control-group input { width: 100%; accent-color: #00ffcc; }
+        
+        .video-container { position: relative; max-width: 400px; margin: 20px auto; }
+        video { width: 100%; border-radius: 12px; transform: scaleX(-1); border: 3px solid #333; }
+        .pip-btn { position: absolute; bottom: 15px; right: 15px; background: #00ffcc; color: #000; border: none; padding: 10px 15px; border-radius: 6px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 10px rgba(0,255,204,0.4); }
     </style>
-    
-    <!-- Firebase SDK Modules -->
+</head>
+<body>
+
+    <h1>📱 iOS LIVE STREAM OVERLAY CONTROLLER</h1>
+    <div>
+        <button class="btn" id="startBtn">ကင်မရာ စဖွင့်မည်</button>
+    </div>
+    <div id="status">ခလုတ်ကို နှိပ်ပါ...</div>
+
+    <div class="list-box">
+        <div class="list-title">👥 ချိတ်ဆက်ထားသော Local OBS များ (<span id="totalConnections">0</span>)</div>
+        <div id="obsList"><div style="color:#777; text-align:center; font-size:14px;">ချိတ်ဆက်မှု မရှိသေးပါ</div></div>
+    </div>
+
+    <div class="control-box">
+        <div class="control-group">
+            <label>အပေါ် / အောက် (Top Position)</label>
+            <input type="range" id="topSlider" min="0" max="900" value="30">
+        </div>
+        <div class="control-group">
+            <label>ဘယ် / ညာ (Left Position)</label>
+            <input type="range" id="leftSlider" min="0" max="1600" value="30">
+        </div>
+        <div class="control-group">
+            <label>အရွယ်အစား (Camera Size/Width)</label>
+            <input type="range" id="sizeSlider" min="150" max="1000" value="400">
+        </div>
+    </div>
+
+    <div class="video-container">
+        <!-- iOS Background Keeping Attributes -->
+        <video id="localVideo" autoplay playsinline webkit-playsinline muted loops></video>
+        <button class="pip-btn" id="pipBtn">📲 Background Live Active ဖွင့်မည်</button>
+    </div>
+
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, set, onValue, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, set, onValue, onDisconnect, remove } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
-        // သင့်ရဲ့ Firebase Config ကို ထည့်သွင်းပေးထားပါသည်
         const firebaseConfig = {
             apiKey: "AIzaSyAtkK8QrsdAlT87VDZN4TNILGGYWyI5T6o",
             authDomain: "vor-solo.firebaseapp.com",
@@ -30,61 +76,140 @@
 
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
-        const signalRef = ref(db, 'stream/signal');
+        const layoutRef = ref(db, 'stream/layout');
+        const connectionsRef = ref(db, 'stream/connections');
 
-        let peerConnection;
-        const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        let localStream;
+        let peerConnections = {};
+        const configuration = { iceServers: [], iceTransportPolicy: "all" };
+
+        const localVideo = document.getElementById('localVideo');
+        const pipBtn = document.getElementById('pipBtn');
+
+        if (localVideo.webkitSupportsPresentationMode && typeof localVideo.webkitSetPresentationMode === "function") {
+            pipBtn.style.display = 'block';
+            pipBtn.addEventListener('click', () => {
+                localVideo.webkitSetPresentationMode(localVideo.webkitPresentationMode === "picture-in-picture" ? "inline" : "picture-in-picture");
+            });
+        } else if (document.pictureInPictureEnabled) {
+            pipBtn.style.display = 'block';
+            pipBtn.addEventListener('click', async () => {
+                try {
+                    if (document.pictureInPictureElement) {
+                        await document.exitPictureInPicture();
+                    } else {
+                        await localVideo.requestPictureInPicture();
+                    }
+                } catch (e) { console.error(e); }
+            });
+        }
+
+        onValue(connectionsRef, (snapshot) => {
+            const data = snapshot.val();
+            const obsListDiv = document.getElementById('obsList');
+            const totalCountSpan = document.getElementById('totalConnections');
+            obsListDiv.innerHTML = "";
+            
+            if (data) {
+                const keys = Object.keys(data);
+                totalCountSpan.innerText = keys.length;
+                
+                keys.forEach((id, index) => {
+                    const item = document.createElement('div');
+                    item.className = "obs-item";
+                    item.innerHTML = `
+                        <span class="obs-id">🖥️ Local OBS #${index + 1} (${id})</span>
+                        <button class="btn-kick" data-id="${id}">ဖြတ်မည် (Kick)</button>
+                    `;
+                    obsListDiv.appendChild(item);
+
+                    if (localStream && !peerConnections[id] && data[id] === "waiting") {
+                        setupPeerConnection(id);
+                    }
+                });
+
+                document.querySelectorAll('.btn-kick').forEach(button => {
+                    button.addEventListener('click', function() {
+                        kickOBS(this.getAttribute('data-id'));
+                    });
+                });
+            } else {
+                totalCountSpan.innerText = "0";
+                obsListDiv.innerHTML = `<div style="color:#777; text-align:center; font-size:14px;">ချိတ်ဆက်မှု မရှိသေးပါ</div>`;
+            }
+        });
+
+        async function setupPeerConnection(id) {
+            const pc = new RTCPeerConnection(configuration);
+            peerConnections[id] = pc;
+
+            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+            pc.onicecandidate = event => {
+                if (event.candidate && event.candidate.candidate.includes("host")) {
+                    set(ref(db, `stream/signals/${id}/candidate`), JSON.stringify(event.candidate));
+                }
+            };
+
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            
+            await set(ref(db, `stream/signals/${id}/offer`), JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+            await set(ref(db, `stream/connections/${id}`), "offered");
+
+            onValue(ref(db, `stream/signals/${id}/answer`), async (snapshot) => {
+                const answerData = snapshot.val();
+                if (answerData && pc.signalingState !== "stable") {
+                    await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(answerData)));
+                    sendLayoutUpdate();
+                }
+            });
+        }
+
+        async function kickOBS(id) {
+            if (peerConnections[id]) {
+                peerConnections[id].close();
+                delete peerConnections[id];
+            }
+            await remove(ref(db, `stream/connections/${id}`));
+            await remove(ref(db, `stream/signals/${id}`));
+        }
+
+        function sendLayoutUpdate() {
+            set(layoutRef, {
+                top: document.getElementById('topSlider').value + "px",
+                left: document.getElementById('leftSlider').value + "px",
+                width: document.getElementById('sizeSlider').value + "px"
+            });
+        }
+
+        document.getElementById('topSlider').addEventListener('input', sendLayoutUpdate);
+        document.getElementById('leftSlider').addEventListener('input', sendLayoutUpdate);
+        document.getElementById('sizeSlider').addEventListener('input', sendLayoutUpdate);
 
         window.startCamera = async function() {
             document.getElementById('status').innerText = "ကင်မရာ ဖွင့်နေပါသည်...";
             try {
-                // ရှေ့ကင်မရာ (user) သို့မဟုတ် နောက်ကင်မရာ (environment) စိတ်ကြိုက်ပြောင်းနိုင်သည်
-                const stream = await navigator.mediaDevices.getUserMedia({ 
+                localStream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: "user", width: 1280, height: 720 }, 
                     audio: false 
                 });
-                document.getElementById('localVideo').srcObject = stream;
-
-                peerConnection = new RTCPeerConnection(configuration);
-                stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
-
-                peerConnection.onicecandidate = event => {
-                    if (event.candidate) {
-                        set(ref(db, 'stream/candidate'), JSON.stringify(event.candidate));
-                    }
-                };
-
-                const offer = await peerConnection.createOffer();
-                await peerConnection.setLocalDescription(offer);
                 
-                // Firebase ပေါ်သို့ Offer တင်ခြင်း
-                await set(signalRef, JSON.stringify({ type: 'offer', sdp: offer.sdp }));
-                document.getElementById('status').innerText = "🟢 ဗီဒီယိုလွှင့်နေပါပြီ။ OBS ဘက်တွင် အလိုအလျောက် ပေါ်လာပါလိမ့်မည်။";
-
-                // OBS ဘက်မှ Answer ပြန်လာသည်ကို စောင့်ကြည့်ခြင်း
-                onValue(ref(db, 'stream/answer'), async (snapshot) => {
-                    const data = snapshot.val();
-                    if (data && peerConnection.signalingState !== "stable") {
-                        const answer = JSON.parse(data);
-                        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-                    }
+                // 🍏 iOS Policy Fix: Background မှာ Track တွေကို Force Mute မဖြစ်အောင် ကာကွယ်ခြင်း
+                localStream.getVideoTracks().forEach(track => {
+                    track.enabled = true;
+                    track.contentHint = "motion"; // iOS stream freeze မဖြစ်အောင် hint ပေးခြင်း
                 });
 
-                // ဖုန်းလိုင်းပိတ်သွားလျှင် ဒေတာများကို Firebase မှ အလိုအလျောက် ဖျက်ရန်
+                localVideo.srcObject = localStream;
+                document.getElementById('status').innerText = "🟢 Live Link အဆင်သင့်ဖြစ်ပါပြီ။ PiP ခလုတ်နှိပ်ပြီးမှ ထွက်ပါ။";
+                
                 onDisconnect(ref(db, 'stream')).remove();
-
             } catch (err) {
                 document.getElementById('status').innerText = "Error: " + err.message;
             }
         }
+        document.getElementById('startBtn').addEventListener('click', startCamera);
     </script>
-</head>
-<body>
-
-    <h1>📱 PHONE STREAM (FIREBASE)</h1>
-    <button class="btn" onclick="startCamera()">ကင်မရာ စဖွင့်မည်</button>
-    <div id="status">ခလုတ်ကို နှိပ်ပါ...</div>
-    <video id="localVideo" autoplay playsinline muted></video>
-
 </body>
 </html>
