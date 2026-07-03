@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phone Camera - Sender</title>
+    <style>
+        body { margin: 0; padding: 20px; background: #121212; color: #fff; font-family: sans-serif; text-align: center; }
+        .btn { padding: 15px 30px; font-size: 18px; font-weight: bold; background: #00ffcc; border: none; border-radius: 8px; cursor: pointer; }
+        .info-box { background: #222; padding: 20px; border-radius: 8px; max-width: 300px; margin: 20px auto; border: 1px solid #333; }
+        #myId { font-size: 32px; color: #00ffcc; display: block; margin-top: 10px; letter-spacing: 2px; }
+        video { width: 100%; max-width: 400px; border-radius: 8px; margin-top: 20px; transform: scaleX(-1); }
+    </style>
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+</head>
+<body>
+
+    <h1>📱 PHONE CAMERA</h1>
+    <button class="btn" onclick="startCamera()">၁။ ကင်မရာ စဖွင့်မည်</button>
+
+    <div class="info-box" id="codeBox" style="display:none;">
+        OBS မှာ ရိုက်ထည့်ရမယ့် ကုဒ်-
+        <b id="myId">...</b>
+    </div>
+
+    <video id="localVideo" autoplay playsinline muted></video>
+
+    <script>
+        // ဂဏန်း ၄ လုံး ကုဒ်အလိုအလျောက်ထုတ်ပေးရန်
+        const randomCode = Math.floor(1000 + Math.random() * 9000).toString();
+
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "user", width: 1280, height: 720 }, 
+                    audio: false 
+                });
+                document.getElementById('localVideo').srcObject = stream;
+
+                const peer = new Peer(randomCode);
+                peer.on('open', (id) => {
+                    document.getElementById('codeBox').style.display = 'block';
+                    document.getElementById('myId').innerText = id;
+                });
+
+                // OBS က လှမ်းခေါ်ရင် ကင်မရာ Feed ပေးလိုက်ရန်
+                peer.on('call', (call) => {
+                    call.answer(stream);
+                });
+            } catch (err) {
+                alert("ကင်မရာ ဖွင့်မရပါ: " + err.message);
+            }
+        }
+    </script>
+</body>
+</html>
