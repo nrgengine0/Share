@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Phone Camera - Firebase Advanced Controller</title>
+    <title>Phone Camera - Local WiFi Only Controller</title>
     <style>
         body { margin: 0; padding: 20px; background: #121212; color: #fff; font-family: sans-serif; text-align: center; }
         .btn { padding: 15px 30px; font-size: 16px; font-weight: bold; background: #00ffcc; border: none; border-radius: 8px; cursor: pointer; color: #000; box-shadow: 0 4px 15px rgba(0,255,204,0.3); margin: 5px; }
@@ -15,7 +15,6 @@
         .obs-item { display: flex; justify-content: space-between; align-items: center; background: #2a2a2a; padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; border: 1px solid #444; }
         .obs-id { font-family: monospace; font-size: 14px; color: #fff; }
         .btn-kick { background: #ff3333; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; }
-        .btn-kick:hover { background: #cc0000; }
         
         /* 🎛️ Layout Slider Styling */
         .control-box { background: #1e1e1e; padding: 20px; border-radius: 12px; max-width: 400px; margin: 20px auto; text-align: left; border: 1px solid #333; }
@@ -27,23 +26,17 @@
 </head>
 <body>
 
-    <h1>📱 PHONE STREAM & INDIVIDUAL CONTROLLER</h1>
-    
-    <div>
-        <button class="btn" id="startBtn">ကင်မရာ စဖွင့်မည်</button>
-    </div>
-
+    <h1>📱 PHONE STREAM & LOCAL WIFI CONTROLLER</h1>
+    <div><button class="btn" id="startBtn">ကင်မရာ စဖွင့်မည်</button></div>
     <div id="status">ခလုတ်ကို နှိပ်ပါ...</div>
 
-    <!-- 👥 လာရောက် Join ထားသော OBS စာရင်းများကို ပြသရန် နေရာ -->
+    <!-- 👥 OBS List -->
     <div class="list-box">
-        <div class="list-title">👥 ချိတ်ဆက်ထားသော OBS များ (<span id="totalConnections">0</span>)</div>
-        <div id="obsList">
-            <div style="color:#777; text-align:center; font-size:14px;">ချိတ်ဆက်မှု မရှိသေးပါ</div>
-        </div>
+        <div class="list-title">👥 ချိတ်ဆက်ထားသော Local OBS များ (<span id="totalConnections">0</span>)</div>
+        <div id="obsList"><div style="color:#777; text-align:center; font-size:14px;">ချိတ်ဆက်မှု မရှိသေးပါ</div></div>
     </div>
 
-    <!-- 🎛️ Layout ထိန်းချုပ်ရန် Sliders များ -->
+    <!-- 🎛️ Layout Sliders -->
     <div class="control-box">
         <div class="control-group">
             <label>အပေါ် / အောက် (Top Position)</label>
@@ -79,20 +72,23 @@
 
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
-        const signalRef = ref(db, 'stream/signal');
         const layoutRef = ref(db, 'stream/layout');
         const connectionsRef = ref(db, 'stream/connections');
 
-        let peerConnection;
-        const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        let localStream;
+        let peerConnections = {};
+        
+        // 🔒 Google STUN ကို ဖယ်ထုတ်ပြီး Local WiFi (Host to Host) သီးသန့်သာ ချိတ်ခိုင်းခြင်း
+        const configuration = { 
+            iceServers: [], 
+            iceTransportPolicy: "all" 
+        };
 
-        // --- 👥 OBS List များကို Real-time ဖမ်းပြီး List ဆောက်ပေးခြင်း ---
         onValue(connectionsRef, (snapshot) => {
             const data = snapshot.val();
             const obsListDiv = document.getElementById('obsList');
             const totalCountSpan = document.getElementById('totalConnections');
-            
-            obsListDiv.innerHTML = ""; // list အဟောင်းကို အရင်ရှင်းသည်
+            obsListDiv.innerHTML = "";
             
             if (data) {
                 const keys = Object.keys(data);
@@ -102,17 +98,19 @@
                     const item = document.createElement('div');
                     item.className = "obs-item";
                     item.innerHTML = `
-                        <span class="obs-id">🖥️ OBS Screen #${index + 1} (${id})</span>
+                        <span class="obs-id">🖥️ Local OBS #${index + 1} (${id})</span>
                         <button class="btn-kick" data-id="${id}">ဖြတ်မည် (Kick)</button>
                     `;
                     obsListDiv.appendChild(item);
+
+                    if (localStream && !peerConnections[id] && data[id] === "waiting") {
+                        setupPeerConnection(id);
+                    }
                 });
 
-                // Kick ခလုတ်များအတွက် Event ပတ်ခြင်း
                 document.querySelectorAll('.btn-kick').forEach(button => {
                     button.addEventListener('click', function() {
-                        const targetId = this.getAttribute('data-id');
-                        kickOBS(targetId);
+                        kickOBS(this.getAttribute('data-id'));
                     });
                 });
             } else {
@@ -121,23 +119,50 @@
             }
         });
 
-        // --- ❌ ရွေးချယ်လိုက်သော OBS ID တစ်ခုတည်းကို ဖြတ်ချပစ်မည့် Function ---
+        async function setupPeerConnection(id) {
+            const pc = new RTCPeerConnection(configuration);
+            peerConnections[id] = pc;
+
+            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+            pc.onicecandidate = event => {
+                if (event.candidate) {
+                    // ကမ္ဘာ့အပြင်ဘက်လိုင်း (srflx/relay) ပါလာရင် လုံးဝလက်မခံဘဲ Local Host ဖြစ်မှသာ ပို့မည်
+                    if (event.candidate.candidate.includes("host")) {
+                        set(ref(db, `stream/signals/${id}/candidate`), JSON.stringify(event.candidate));
+                    }
+                }
+            };
+
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            
+            await set(ref(db, `stream/signals/${id}/offer`), JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+            await set(ref(db, `stream/connections/${id}`), "offered");
+
+            onValue(ref(db, `stream/signals/${id}/answer`), async (snapshot) => {
+                const answerData = snapshot.val();
+                if (answerData && pc.signalingState !== "stable") {
+                    await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(answerData)));
+                    sendLayoutUpdate();
+                }
+            });
+        }
+
         async function kickOBS(id) {
-            document.getElementById('status').innerText = `⚠️ OBS (${id}) ကို ဖြတ်တောက်နေပါသည်...`;
-            // ၎င်း OBS ရဲ့ Database အောက်က Status ကို ပယ်ဖျက်လိုက်ခြင်းဖြင့် Kick ထုတ်သည်
+            if (peerConnections[id]) {
+                peerConnections[id].close();
+                delete peerConnections[id];
+            }
             await remove(ref(db, `stream/connections/${id}`));
-            document.getElementById('status').innerText = `🟢 OBS (${id}) ကို ဖြတ်တောက်ပြီးပါပြီ။`;
+            await remove(ref(db, `stream/signals/${id}`));
         }
 
         function sendLayoutUpdate() {
-            const topVal = document.getElementById('topSlider').value;
-            const leftVal = document.getElementById('leftSlider').value;
-            const sizeVal = document.getElementById('sizeSlider').value;
-
             set(layoutRef, {
-                top: topVal + "px",
-                left: leftVal + "px",
-                width: sizeVal + "px"
+                top: document.getElementById('topSlider').value + "px",
+                left: document.getElementById('leftSlider').value + "px",
+                width: document.getElementById('sizeSlider').value + "px"
             });
         }
 
@@ -148,43 +173,18 @@
         window.startCamera = async function() {
             document.getElementById('status').innerText = "ကင်မရာ ဖွင့်နေပါသည်...";
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
+                localStream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: "user", width: 1280, height: 720 }, 
                     audio: false 
                 });
-                document.getElementById('localVideo').srcObject = stream;
-
-                peerConnection = new RTCPeerConnection(configuration);
-                stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
-
-                peerConnection.onicecandidate = event => {
-                    if (event.candidate) {
-                        set(ref(db, 'stream/candidate'), JSON.stringify(event.candidate));
-                    }
-                };
-
-                const offer = await peerConnection.createOffer();
-                await peerConnection.setLocalDescription(offer);
+                document.getElementById('localVideo').srcObject = localStream;
+                document.getElementById('status').innerText = "🟢 Local Cam အသင့်ဖြစ်ပါပြီ။ (တူညီသော WiFi အတွင်းသာ အလုပ်လုပ်မည်)";
                 
-                await set(signalRef, JSON.stringify({ type: 'offer', sdp: offer.sdp }));
-                document.getElementById('status').innerText = "🟢 ဗီဒီယိုလွှင့်နေပါပြီ။ OBS ဘက်တွင် အလိုအလျောက် ပေါ်လာပါလိမ့်မည်။";
-
-                onValue(ref(db, 'stream/answer'), async (snapshot) => {
-                    const data = snapshot.val();
-                    if (data && peerConnection.signalingState !== "stable") {
-                        const answer = JSON.parse(data);
-                        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-                        sendLayoutUpdate();
-                    }
-                });
-
                 onDisconnect(ref(db, 'stream')).remove();
-
             } catch (err) {
                 document.getElementById('status').innerText = "Error: " + err.message;
             }
         }
-
         document.getElementById('startBtn').addEventListener('click', startCamera);
     </script>
 </body>
