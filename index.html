@@ -85,10 +85,22 @@
         const localVideo = document.getElementById('localVideo');
         const pipBtn = document.getElementById('pipBtn');
 
+        // 🍏 iOS Safari & Chromium Web PiP Fallback Trigger (တခြားကုဒ်မပြင်ဘဲ ခလုတ်ပွင့်အောင် လုပ်ထားသည်)
         if (localVideo.webkitSupportsPresentationMode && typeof localVideo.webkitSetPresentationMode === "function") {
             pipBtn.style.display = 'block';
             pipBtn.addEventListener('click', () => {
                 localVideo.webkitSetPresentationMode(localVideo.webkitPresentationMode === "picture-in-picture" ? "inline" : "picture-in-picture");
+            });
+        } else if (document.pictureInPictureEnabled) {
+            pipBtn.style.display = 'block';
+            pipBtn.addEventListener('click', async () => {
+                try {
+                    if (document.pictureInPictureElement) {
+                        await document.exitPictureInPicture();
+                    } else {
+                        await localVideo.requestPictureInPicture();
+                    }
+                } catch (e) { console.error(e); }
             });
         }
 
@@ -124,7 +136,6 @@
             } else {
                 totalCountSpan.innerText = "0";
                 obsListDiv.innerHTML = `<div style="color:#777; text-align:center; font-size:14px;">ချိတ်ဆက်မှု မရှိသေးပါ</div>`;
-                // If all connections removed, close peers locally
                 Object.keys(peerConnections).forEach(id => {
                     peerConnections[id].close();
                     delete peerConnections[id];
