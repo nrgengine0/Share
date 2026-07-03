@@ -16,7 +16,31 @@
         .control-group label { display: block; margin-bottom: 5px; color: #00ffcc; font-weight: bold; }
         .control-group input { width: 100%; accent-color: #00ffcc; }
     </style>
-    
+</head>
+<body>
+
+    <h1>📱 PHONE STREAM & CONTROLLER</h1>
+    <button class="btn" id="startBtn">ကင်မရာ စဖွင့်မည်</button>
+    <div id="status">ခလုတ်ကို နှိပ်ပါ...</div>
+
+    <!-- 🎛️ Layout ထိန်းချုပ်ရန် Sliders များ -->
+    <div class="control-box">
+        <div class="control-group">
+            <label>အပေါ် / အောက် (Top Position)</label>
+            <input type="range" id="topSlider" min="0" max="900" value="30">
+        </div>
+        <div class="control-group">
+            <label>ဘယ် / ညာ (Left Position)</label>
+            <input type="range" id="leftSlider" min="0" max="1600" value="30">
+        </div>
+        <div class="control-group">
+            <label>အရွယ်အစား (Camera Size/Width)</label>
+            <input type="range" id="sizeSlider" min="150" max="1000" value="400">
+        </div>
+    </div>
+
+    <video id="localVideo" autoplay playsinline muted></video>
+
     <!-- Firebase SDK Modules -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
@@ -54,12 +78,12 @@
             });
         }
 
-        // Sliders များ ရွှေ့လျှင် ချက်ချင်း ဒေတာပို့ရန် Event ပတ်ခြင်း
-        document.querySelectorAll('.layout-slider').forEach(slider => {
-            slider.addEventListener('input', sendLayoutUpdate);
-        });
+        // Sliders အားလုံးကို Event ပတ်ခြင်း
+        document.getElementById('topSlider').addEventListener('input', sendLayoutUpdate);
+        document.getElementById('leftSlider').addEventListener('input', sendLayoutUpdate);
+        document.getElementById('sizeSlider').addEventListener('input', sendLayoutUpdate);
 
-        window.startCamera = async function() {
+        async function startCamera() {
             document.getElementById('status').innerText = "ကင်မရာ ဖွင့်နေပါသည်...";
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -80,10 +104,11 @@
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
                 
+                // ယခင်အလုပ်လုပ်ခဲ့သည့်အတိုင်း signalRef (stream/signal) ထဲသို့ အသေအချာပြန်ထည့်သည်
                 await set(signalRef, JSON.stringify({ type: 'offer', sdp: offer.sdp }));
                 document.getElementById('status').innerText = "🟢 ဗီဒီယိုလွှင့်နေပါပြီ။ OBS ဘက်တွင် အလိုအလျောက် ပေါ်လာပါလိမ့်မည်။";
 
-                // ပထမဆုံးအကြိမ် Layout အခြေအနေကို ပို့ထားရန်
+                // စဖွင့်ချင်း Layout အခြေအနေကို တစ်ခါတည်း ပို့လိုက်သည်
                 sendLayoutUpdate();
 
                 onValue(ref(db, 'stream/answer'), async (snapshot) => {
@@ -100,31 +125,8 @@
                 document.getElementById('status').innerText = "Error: " + err.message;
             }
         }
+
+        document.getElementById('startBtn').addEventListener('click', startCamera);
     </script>
-</head>
-<body>
-
-    <h1>📱 PHONE STREAM & CONTROLLER</h1>
-    <button class="btn" onclick="startCamera()">ကင်မရာ စဖွင့်မည်</button>
-    <div id="status">ခလုတ်ကို နှိပ်ပါ...</div>
-
-    <!-- 🎛️ Layout ထိန်းချုပ်ရန် Sliders များ -->
-    <div class="control-box">
-        <div class="control-group">
-            <label>အပေါ် / အောက် (Top Position)</label>
-            <input type="range" id="topSlider" class="layout-slider" min="0" max="900" value="30">
-        </div>
-        <div class="control-group">
-            <label>ဘယ် / ညာ (Left Position)</label>
-            <input type="range" id="leftSlider" class="layout-slider" min="0" max="1600" value="30">
-        </div>
-        <div class="control-group">
-            <label>အရွယ်အစား (Camera Size/Width)</label>
-            <input type="range" id="sizeSlider" class="layout-slider" min="150" max="1000" value="400">
-        </div>
-    </div>
-
-    <video id="localVideo" autoplay playsinline muted></video>
-
 </body>
 </html>
