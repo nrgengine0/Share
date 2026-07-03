@@ -3,54 +3,88 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Phone Camera - Sender</title>
+    <title>Phone Camera - Firebase Sender</title>
     <style>
         body { margin: 0; padding: 20px; background: #121212; color: #fff; font-family: sans-serif; text-align: center; }
-        .btn { padding: 15px 30px; font-size: 18px; font-weight: bold; background: #00ffcc; border: none; border-radius: 8px; cursor: pointer; }
-        .info-box { background: #222; padding: 20px; border-radius: 8px; max-width: 300px; margin: 20px auto; border: 1px solid #333; }
-        #myId { font-size: 32px; color: #00ffcc; display: block; margin-top: 10px; letter-spacing: 2px; }
-        video { width: 100%; max-width: 400px; border-radius: 8px; margin-top: 20px; transform: scaleX(-1); }
+        .btn { padding: 15px 30px; font-size: 18px; font-weight: bold; background: #00ffcc; border: none; border-radius: 8px; cursor: pointer; color: #000; box-shadow: 0 4px 15px rgba(0,255,204,0.3); }
+        #status { margin-top: 20px; color: #888; font-size: 15px; }
+        video { width: 100%; max-width: 400px; border-radius: 12px; margin-top: 20px; transform: scaleX(-1); border: 3px solid #333; box-shadow: 0 5px 15px rgba(0,0,0,0.5); }
     </style>
-    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
-</head>
-<body>
+    
+    <!-- Firebase SDK Modules -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getDatabase, ref, set, onValue, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
-    <h1>📱 PHONE CAMERA</h1>
-    <button class="btn" onclick="startCamera()">၁။ ကင်မရာ စဖွင့်မည်</button>
+        // သင့်ရဲ့ Firebase Config ကို ထည့်သွင်းပေးထားပါသည်
+        const firebaseConfig = {
+            apiKey: "AIzaSyAtkK8QrsdAlT87VDZN4TNILGGYWyI5T6o",
+            authDomain: "vor-solo.firebaseapp.com",
+            databaseURL: "https://vor-solo-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "vor-solo",
+            storageBucket: "vor-solo.firebasestorage.app",
+            messagingSenderId: "856896766437",
+            appId: "1:856896766437:web:3431fc6596d95aa0e8ef0c",
+            measurementId: "G-0PYHWM5Y4P"
+        };
 
-    <div class="info-box" id="codeBox" style="display:none;">
-        OBS မှာ ရိုက်ထည့်ရမယ့် ကုဒ်-
-        <b id="myId">...</b>
-    </div>
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+        const signalRef = ref(db, 'stream/signal');
 
-    <video id="localVideo" autoplay playsinline muted></video>
+        let peerConnection;
+        const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-    <script>
-        // ဂဏန်း ၄ လုံး ကုဒ်အလိုအလျောက်ထုတ်ပေးရန်
-        const randomCode = Math.floor(1000 + Math.random() * 9000).toString();
-
-        async function startCamera() {
+        window.startCamera = async function() {
+            document.getElementById('status').innerText = "ကင်မရာ ဖွင့်နေပါသည်...";
             try {
+                // ရှေ့ကင်မရာ (user) သို့မဟုတ် နောက်ကင်မရာ (environment) စိတ်ကြိုက်ပြောင်းနိုင်သည်
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: "user", width: 1280, height: 720 }, 
                     audio: false 
                 });
                 document.getElementById('localVideo').srcObject = stream;
 
-                const peer = new Peer(randomCode);
-                peer.on('open', (id) => {
-                    document.getElementById('codeBox').style.display = 'block';
-                    document.getElementById('myId').innerText = id;
+                peerConnection = new RTCPeerConnection(configuration);
+                stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
+
+                peerConnection.onicecandidate = event => {
+                    if (event.candidate) {
+                        set(ref(db, 'stream/candidate'), JSON.stringify(event.candidate));
+                    }
+                };
+
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                
+                // Firebase ပေါ်သို့ Offer တင်ခြင်း
+                await set(signalRef, JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+                document.getElementById('status').innerText = "🟢 ဗီဒီယိုလွှင့်နေပါပြီ။ OBS ဘက်တွင် အလိုအလျောက် ပေါ်လာပါလိမ့်မည်။";
+
+                // OBS ဘက်မှ Answer ပြန်လာသည်ကို စောင့်ကြည့်ခြင်း
+                onValue(ref(db, 'stream/answer'), async (snapshot) => {
+                    const data = snapshot.val();
+                    if (data && peerConnection.signalingState !== "stable") {
+                        const answer = JSON.parse(data);
+                        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+                    }
                 });
 
-                // OBS က လှမ်းခေါ်ရင် ကင်မရာ Feed ပေးလိုက်ရန်
-                peer.on('call', (call) => {
-                    call.answer(stream);
-                });
+                // ဖုန်းလိုင်းပိတ်သွားလျှင် ဒေတာများကို Firebase မှ အလိုအလျောက် ဖျက်ရန်
+                onDisconnect(ref(db, 'stream')).remove();
+
             } catch (err) {
-                alert("ကင်မရာ ဖွင့်မရပါ: " + err.message);
+                document.getElementById('status').innerText = "Error: " + err.message;
             }
         }
     </script>
+</head>
+<body>
+
+    <h1>📱 PHONE STREAM (FIREBASE)</h1>
+    <button class="btn" onclick="startCamera()">ကင်မရာ စဖွင့်မည်</button>
+    <div id="status">ခလုတ်ကို နှိပ်ပါ...</div>
+    <video id="localVideo" autoplay playsinline muted></video>
+
 </body>
 </html>
